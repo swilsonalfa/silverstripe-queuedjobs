@@ -349,6 +349,48 @@ class QueuedJobsTest extends SapphireTest {
 		$this->assertEquals(QueuedJob::STATUS_PAUSED, $descriptor->JobStatus);
 		$this->assertEmpty($nextJob);
 	}
+	
+	public function testJobHealthTiming() {
+		Config::inst()->update('QueuedJobService', 'health_check_mins', 5);
+		
+		$svc = $this->getService();
+		$job = new TestQueuedJob(QueuedJob::IMMEDIATE);
+		$job->firstJob = true;
+		$id = $svc->queueJob($job);
+		$descriptor = QueuedJobDescriptor::get()->byID($id);
+
+		// Verify initial state is new and LastProcessedCount is not marked yet
+		$this->assertEquals(QueuedJob::STATUS_NEW, $descriptor->JobStatus);
+		$this->assertEquals(0, $descriptor->StepsProcessed);
+		$this->assertEquals(-1, $descriptor->LastProcessedCount);
+		$this->assertEquals(0, $descriptor->ResumeCounts);
+
+		
+		// Run 1 - Start the job (no work is done)
+		$descriptor->JobStatus = QueuedJob::STATUS_INIT;
+		$descriptor->write();
+		
+		// run the scan with time _not_ right for now
+		SS_Datetime::set_mock_now(date('Y-m-d H:04:00'));
+		$svc->checkJobHealth();
+
+		$descriptor = QueuedJobDescriptor::get()->byID($id);
+		// Verify initial state is new and LastProcessedCount is not marked yet
+		$this->assertEquals(0, $descriptor->StepsProcessed);
+		$this->assertEquals(-1, $descriptor->LastProcessedCount);
+		$this->assertEquals(0, $descriptor->ResumeCounts);
+		
+		SS_Datetime::set_mock_now(date('Y-m-d H:05:00'));
+		// this should set some things
+		$svc->checkJobHealth();
+
+		$descriptor = QueuedJobDescriptor::get()->byID($id);
+		// Verify initial state is new and LastProcessedCount is not marked yet
+		$this->assertEquals(0, $descriptor->StepsProcessed);
+		$this->assertEquals(0, $descriptor->LastProcessedCount);
+		$this->assertEquals(0, $descriptor->ResumeCounts);
+
+	}
 }
 
 // stub class to be able to call init from an external context

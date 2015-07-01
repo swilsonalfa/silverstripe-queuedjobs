@@ -24,6 +24,13 @@
  */
 class QueuedJobService {
 	
+	/** 
+	 * How often should health checks be performed?
+	 *
+	 * @var int
+	 */
+	private static $health_check_mins = 0;
+	
 	private static $stall_threshold = 3;
 
 	/**
@@ -255,42 +262,49 @@ class QueuedJobService {
 	 * fix them
 	 */
 	public function checkJobHealth() {
-		// Select all jobs currently marked as running
-		$runningJobs = QueuedJobDescriptor::get()
-			->filter(
-				'JobStatus',
-				array(
-					QueuedJob::STATUS_RUN,
-					QueuedJob::STATUS_INIT
-				)
-			);
-
-		// If no steps have been processed since the last run, consider it a broken job
-		// Only check jobs that have been viewed before. LastProcessedCount defaults to -1 on new jobs.
-		$stalledJobs = $runningJobs
-			->filter('LastProcessedCount:GreaterThanOrEqual', 0)
-			->where('"StepsProcessed" = "LastProcessedCount"');
-		foreach ($stalledJobs as $stalledJob) {
-			$this->restartStalledJob($stalledJob);
+		$checkMod = Config::inst()->get(__CLASS__, 'health_check_mins');
+		if (!$checkMod) {
+			$checkMod = 1;
 		}
 		
-		// now, find those that need to be marked before the next check
-		// foreach job, mark it as having been incremented
-		foreach ($runningJobs as $job) {
-			$job->LastProcessedCount = $job->StepsProcessed;
-			$job->write();
-		}
+		if ((SS_Datetime::now()->Format('i') % $checkMod) === 0) {
+			// Select all jobs currently marked as running
+			$runningJobs = QueuedJobDescriptor::get()
+				->filter(
+					'JobStatus',
+					array(
+						QueuedJob::STATUS_RUN,
+						QueuedJob::STATUS_INIT
+					)
+				);
 
-		// finally, find the list of broken jobs and send an email if there's some found
-		$brokenJobs = QueuedJobDescriptor::get()->filter('JobStatus', QueuedJob::STATUS_BROKEN);
-		if ($brokenJobs && $brokenJobs->count()) {
-			SS_Log::log(array(
-				'errno' => 0,
-				'errstr' => 'Broken jobs were found in the job queue',
-				'errfile' => __FILE__,
-				'errline' => __LINE__,
-				'errcontext' => ''
-			), SS_Log::ERR);
+			// If no steps have been processed since the last run, consider it a broken job
+			// Only check jobs that have been viewed before. LastProcessedCount defaults to -1 on new jobs.
+			$stalledJobs = $runningJobs
+				->filter('LastProcessedCount:GreaterThanOrEqual', 0)
+				->where('"StepsProcessed" = "LastProcessedCount"');
+			foreach ($stalledJobs as $stalledJob) {
+				$this->restartStalledJob($stalledJob);
+			}
+
+			// now, find those that need to be marked before the next check
+			// foreach job, mark it as having been incremented
+			foreach ($runningJobs as $job) {
+				$job->LastProcessedCount = $job->StepsProcessed;
+				$job->write();
+			}
+
+			// finally, find the list of broken jobs and send an email if there's some found
+			$brokenJobs = QueuedJobDescriptor::get()->filter('JobStatus', QueuedJob::STATUS_BROKEN);
+			if ($brokenJobs && $brokenJobs->count()) {
+				SS_Log::log(array(
+					'errno' => 0,
+					'errstr' => 'Broken jobs were found in the job queue',
+					'errfile' => __FILE__,
+					'errline' => __LINE__,
+					'errcontext' => ''
+				), SS_Log::ERR);
+			}
 		}
 	}
 
